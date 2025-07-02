@@ -30,10 +30,10 @@
  * }
  *
  * function handleError(error: NetworkError | TimeoutError) {
- *   return TaggedError.match(error)
- *     .with("NetworkError", (e) => retryRequest())
- *     .with("TimeoutError", (e) => increaseTimeout(e.duration))
- *     .exhaustive();
+ *   return TaggedError.match(error, {
+ *     NetworkError: (e) => retryRequest(),
+ *     TimeoutError: (e) => increaseTimeout(e.duration),
+ *   });
  * }
  * ```
  */
@@ -65,60 +65,13 @@
  *
  * // Uso com pattern matching
  * function handleError(error: TimeoutError | ValidationError) {
- *   return TaggedError.match(error)
- *     .with("TimeoutError", (e) => `Timeout after ${e.timelimit}ms`)
- *     .with("ValidationError", (e) => `Field error: ${e.field}`)
- *     .exhaustive();
+ *   return TaggedError.match(error, {
+ *     TimeoutError: (e) => `Timeout after ${e.timelimit}ms`,
+ *     ValidationError: (e) => `Field error: ${e.field}`,
+ *   });
  * }
  * ```
  */
-
-class Match<TInput extends TaggedError<any>, TReturn> {
-  readonly #error: TInput;
-  readonly #cases: Map<TInput["tag"], (e: TInput) => any> = new Map();
-
-  constructor(error: TInput) {
-    this.#error = error;
-  }
-
-  with<TSelectedTags extends TInput["tag"][], TNewReturn>(
-    ...args: [
-      ...tags: TSelectedTags,
-      handler: (
-        error: Extract<TInput, { tag: TSelectedTags[number] }>
-      ) => TNewReturn,
-    ]
-  ): Match<Exclude<TInput, { tag: TSelectedTags[number] }>, TReturn | TNewReturn> {
-    const handler = args[args.length - 1] as (e: TInput) => TNewReturn;
-    const tags = args.slice(0, args.length - 1) as TSelectedTags;
-
-    for (const tag of tags) {
-      this.#cases.set(tag, handler as (e: TInput) => any);
-    }
-
-    return this as any;
-  }
-
-  otherwise(handler: (e: TInput) => TReturn): TReturn {
-    const caseHandler = this.#cases.get(this.#error.tag);
-    if (caseHandler) {
-      return caseHandler(this.#error) as TReturn;
-    }
-    return handler(this.#error);
-  }
-
-  exhaustive(this: Match<never, TReturn>): TReturn {
-    const self = this as any as Match<TaggedError<string>, TReturn>;
-    const caseHandler = self.#cases.get(self.#error.tag);
-
-    if (caseHandler) {
-      return caseHandler(self.#error) as TReturn;
-    }
-
-    throw new Error(`Exhaustive match failed for tag "${self.#error.tag}"`);
-  }
-}
-
 abstract class TaggedErrorConstructor<Tag extends string> extends Error {
   #tag: Tag;
 
@@ -152,30 +105,56 @@ abstract class TaggedErrorConstructor<Tag extends string> extends Error {
   }
 
   /**
-   * Inicia o processo de pattern matching type-safe baseado na tag do erro.
+   * Executa pattern matching type-safe baseado na tag do erro.
    *
-   * Retorna um builder que permite encadear casos com `.with()` e finalizar
-   * com `.exhaustive()` ou `.otherwise()`.
+   * Permite tratar diferentes tipos de erro de forma declarativa e exhaustiva.
+   * O TypeScript garante que todos os casos sejam cobertos ou que exista um caso padrão.
    *
-   * @returns Um builder de `Match` para construção do pattern matching.
+   * @param error - A instância do erro a ser correspondida.
+   * @param cases - Objeto mapeando tags para funções de tratamento.
+   * @returns O resultado da função de tratamento correspondente à tag.
+   *
+   * @throws When no case matches the tag and there is no default case.
    *
    * @example
    * ```typescript
    * // Pattern matching completo e exaustivo
-   * const result = TaggedError.match(error)
-   *   .with("TimeoutError", (e) => `Timeout: ${e.timelimit}ms`)
-   *   .with("ValidationError", (e) => `Invalid: ${e.field}`)
-   *   .with("NetworkError", (e) => `Network: ${e.statusCode}`)
-   *   .exhaustive();
+   * const result = TaggedError.match(error, {
+   *   TimeoutError: (e) => `Timeout: ${e.timelimit}ms`,
+   *   ValidationError: (e) => `Invalid: ${e.field}`,
+   *   NetworkError: (e) => `Network: ${e.statusCode}`,
+   * });
    *
    * // Pattern matching com caso padrão
-   * const result = TaggedError.match(error)
-   *   .with("TimeoutError", (e) => handleTimeout(e))
-   *   .otherwise((e) => handleUnexpectedError(e));
+   * const result = TaggedError.match(error, {
+   *   TimeoutError: (e) => handleTimeout(e),
+   *   "*": (e) => handleUnexpectedError(e),
+   * });
    * ```
    */
-  public static match<TInput extends TaggedError<any>>(error: TInput): Match<TInput, never> {
-    return new Match(error);
+  public static match<TInput extends TaggedError<any>, TCase extends AllCases<TInput["tag"], TInput>>(
+    error: TInput,
+    cases: TCase
+  ): ExtractReturnTypes<TCase>;
+  public static match<TInput extends TaggedError<any>, TCase extends SomeCases<TInput["tag"], TInput>>(
+    error: TInput,
+    cases: TCase
+  ): ExtractReturnTypes<TCase>;
+  public static match<TInput extends TaggedError<any>, TCase extends AllCases<TInput["tag"], TInput> | SomeCases<TInput["tag"], TInput>>(
+    error: TInput,
+    cases: TCase
+  ): ExtractReturnTypes<TCase> {
+    const tag = error.tag;
+
+    if (typeof (cases as any)[tag] === "function") {
+      return (cases as any)[tag](error);
+    }
+
+    if ("*" in cases && typeof (cases as any)["*"] === "function") {
+      return (cases as any)["*"](error);
+    }
+
+    throw new Error(`No case found for tag '${tag}'`);
   }
 }
 
@@ -261,6 +240,38 @@ export const TaggedError =
  * ```
  */
 export type TaggedError<Tag extends string> = TaggedErrorConstructor<Tag>;
+
+/**
+ * Helper type to extract the union of return types from a cases object.
+ */
+type ExtractReturnTypes<T> = T extends Record<string, (...args: any[]) => infer R> ? R : never;
+
+/**
+ * Tipo que representa um caso padrão (wildcard) no pattern matching.
+ *
+ * Usado quando nem todos os casos específicos são cobertos e é necessário
+ * um tratamento genérico para casos não previstos.
+ */
+type DefaultCase = { '*': (e: TaggedError<string>) => any };
+
+/**
+ * Tipo que representa cases completos onde todos os casos possíveis são cobertos.
+ *
+ * Garante que existe uma função de tratamento para cada tag possível.
+ */
+type AllCases<Tag extends string, Error extends TaggedError<Tag>> = {
+  [K in Tag]: (e: Extract<Error, { tag: K }>) => any;
+};
+
+/**
+ * Tipo que representa cases parciais com um caso padrão.
+ *
+ * Permite cobrir apenas alguns casos específicos e delegar o resto
+ * para o caso padrão (wildcard "*").
+ */
+type SomeCases<Tag extends string, Error extends TaggedError<Tag>> = Partial<
+  AllCases<Tag, Error>
+> & DefaultCase;
 
 /**
  * Corrige o nome de uma função/classe para melhor debugging e inspeção.

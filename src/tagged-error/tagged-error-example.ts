@@ -40,17 +40,18 @@ const opResult = test(1); // TimeoutError | ExpirationError | HttpError | "ok"
 if (opResult instanceof TaggedError) {
   // Aqui, o TypeScript sabe que opResult é uma TaggedError
 
-  const result1 = TaggedError.match(opResult)
-    .with('TimeoutError', (e) => e.timelimit)
-    .with('ExpirationError', (e) => e.timelimit)
-    .with('HttpError', (e) => e.text)
-    .exhaustive();
+  // All cases required
+  const result = TaggedError.match(opResult, {
+    TimeoutError: (e) => e.timelimit, // e is infered as TimeoutError
+    ExpirationError: (e) => e.timelimit, // e is ExpirationError
+    HttpError: (e) => e.text, // e is infered as HttpError
+  }); // result: sould be number | string but is unknown
 
-  const result2 = TaggedError.match(opResult)
-    .with('TimeoutError', (e) => e.timelimit)
-    .otherwise((e) => {
-      throw new Error('Unexpected error', { cause: e });
-    });
+  // If default is provided, not all case hanlders are needed (or none at all)
+  const result2 = TaggedError.match(opResult, {
+    TimeoutError: (e) => 1,
+    '*': (e) => 'Unknown error',
+  }); // result2: sould be number | string, the call does not compile.
 } else {
   // Aqui, o TypeScript sabe que opResult não é uma TaggedError (no caso, é "ok")
 }
