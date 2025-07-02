@@ -73,46 +73,46 @@
  * ```
  */
 
-class Match<TInput extends TaggedError<any>, TOutput> {
+class Match<TInput extends TaggedError<any>, TReturn> {
   readonly #error: TInput;
-  readonly #cases: Map<TInput["tag"], (e: TInput) => TOutput> = new Map();
+  readonly #cases: Map<TInput["tag"], (e: TInput) => any> = new Map();
 
   constructor(error: TInput) {
     this.#error = error;
   }
 
-  with<TSelectedTags extends TInput["tag"][]>(
+  with<TSelectedTags extends TInput["tag"][], TNewReturn>(
     ...args: [
       ...tags: TSelectedTags,
       handler: (
         error: Extract<TInput, { tag: TSelectedTags[number] }>
-      ) => TOutput,
+      ) => TNewReturn,
     ]
-  ): Match<Exclude<TInput, { tag: TSelectedTags[number] }>, TOutput> {
-    const handler = args[args.length - 1] as (e: TInput) => TOutput;
+  ): Match<Exclude<TInput, { tag: TSelectedTags[number] }>, TReturn | TNewReturn> {
+    const handler = args[args.length - 1] as (e: TInput) => TNewReturn;
     const tags = args.slice(0, args.length - 1) as TSelectedTags;
 
     for (const tag of tags) {
-      this.#cases.set(tag, handler);
+      this.#cases.set(tag, handler as (e: TInput) => any);
     }
 
     return this as any;
   }
 
-  otherwise(handler: (e: TInput) => TOutput): TOutput {
+  otherwise(handler: (e: TInput) => TReturn): TReturn {
     const caseHandler = this.#cases.get(this.#error.tag);
     if (caseHandler) {
-      return caseHandler(this.#error);
+      return caseHandler(this.#error) as TReturn;
     }
     return handler(this.#error);
   }
 
-  exhaustive(this: Match<never, TOutput>): TOutput {
-    const self = this as any as Match<TaggedError<string>, TOutput>;
+  exhaustive(this: Match<never, TReturn>): TReturn {
+    const self = this as any as Match<TaggedError<string>, TReturn>;
     const caseHandler = self.#cases.get(self.#error.tag);
 
     if (caseHandler) {
-      return caseHandler(self.#error);
+      return caseHandler(self.#error) as TReturn;
     }
 
     throw new Error(`Exhaustive match failed for tag "${self.#error.tag}"`);
@@ -174,7 +174,7 @@ abstract class TaggedErrorConstructor<Tag extends string> extends Error {
    *   .otherwise((e) => handleUnexpectedError(e));
    * ```
    */
-  public static match<TInput extends TaggedError<any>, TOutput>(error: TInput): Match<TInput, TOutput> {
+  public static match<TInput extends TaggedError<any>>(error: TInput): Match<TInput, never> {
     return new Match(error);
   }
 }
