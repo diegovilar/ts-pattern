@@ -30,10 +30,10 @@
  * }
  *
  * function handleError(error: NetworkError | TimeoutError) {
- *   return error.match({
- *     NetworkError: (e) => retryRequest(),
- *     TimeoutError: (e) => increaseTimeout(e.duration),
- *   });
+ *   return TaggedError.match(error)
+ *     .with("NetworkError", (e) => retryRequest())
+ *     .with("TimeoutError", (e) => increaseTimeout(e.duration))
+ *     .exhaustive();
  * }
  * ```
  */
@@ -65,18 +65,65 @@
  *
  * // Uso com pattern matching
  * function handleError(error: TimeoutError | ValidationError) {
- *   return error.match({
- *     TimeoutError: (e) => `Timeout after ${e.timelimit}ms`,
- *     ValidationError: (e) => `Field error: ${e.field}`,
- *   });
+ *   return TaggedError.match(error)
+ *     .with("TimeoutError", (e) => `Timeout after ${e.timelimit}ms`)
+ *     .with("ValidationError", (e) => `Field error: ${e.field}`)
+ *     .exhaustive();
  * }
  * ```
  */
+
+class Match<TInput extends TaggedError<any>, TOutput> {
+  readonly #error: TInput;
+  readonly #cases: Map<TInput["tag"], (e: TInput) => TOutput> = new Map();
+
+  constructor(error: TInput) {
+    this.#error = error;
+  }
+
+  with<TSelectedTags extends TInput["tag"][]>(
+    ...args: [
+      ...tags: TSelectedTags,
+      handler: (
+        error: Extract<TInput, { tag: TSelectedTags[number] }>
+      ) => TOutput,
+    ]
+  ): Match<Exclude<TInput, { tag: TSelectedTags[number] }>, TOutput> {
+    const handler = args[args.length - 1] as (e: TInput) => TOutput;
+    const tags = args.slice(0, args.length - 1) as TSelectedTags;
+
+    for (const tag of tags) {
+      this.#cases.set(tag, handler);
+    }
+
+    return this as any;
+  }
+
+  otherwise(handler: (e: TInput) => TOutput): TOutput {
+    const caseHandler = this.#cases.get(this.#error.tag);
+    if (caseHandler) {
+      return caseHandler(this.#error);
+    }
+    return handler(this.#error);
+  }
+
+  exhaustive(this: Match<never, TOutput>): TOutput {
+    const self = this as any as Match<TaggedError<string>, TOutput>;
+    const caseHandler = self.#cases.get(self.#error.tag);
+
+    if (caseHandler) {
+      return caseHandler(self.#error);
+    }
+
+    throw new Error(`Exhaustive match failed for tag "${self.#error.tag}"`);
+  }
+}
+
 abstract class TaggedErrorConstructor<Tag extends string> extends Error {
   #tag: Tag;
 
   static {
-    fixName(TaggedErrorConstructor, 'TaggedError');
+    fixName(TaggedErrorConstructor, "TaggedError");
   }
 
   /**
@@ -105,44 +152,30 @@ abstract class TaggedErrorConstructor<Tag extends string> extends Error {
   }
 
   /**
-   * Executa pattern matching type-safe baseado na tag do erro.
+   * Inicia o processo de pattern matching type-safe baseado na tag do erro.
    *
-   * Permite tratar diferentes tipos de erro de forma declarativa e exhaustiva.
-   * O TypeScript garante que todos os casos sejam cobertos ou que exista um caso padrão.
+   * Retorna um builder que permite encadear casos com `.with()` e finalizar
+   * com `.exhaustive()` ou `.otherwise()`.
    *
-   * @param cases - Objeto mapeando tags para funções de tratamento
-   * @returns O resultado da função de tratamento correspondente à tag
-   *
-   * @throws Quando nenhum caso corresponde à tag e não há caso padrão
+   * @returns Um builder de `Match` para construção do pattern matching.
    *
    * @example
    * ```typescript
-   * // Pattern matching completo
-   * const result = error.match({
-   *   TimeoutError: (e) => `Timeout: ${e.timelimit}ms`,
-   *   ValidationError: (e) => `Invalid: ${e.field}`,
-   *   NetworkError: (e) => `Network: ${e.statusCode}`,
-   * });
+   * // Pattern matching completo e exaustivo
+   * const result = TaggedError.match(error)
+   *   .with("TimeoutError", (e) => `Timeout: ${e.timelimit}ms`)
+   *   .with("ValidationError", (e) => `Invalid: ${e.field}`)
+   *   .with("NetworkError", (e) => `Network: ${e.statusCode}`)
+   *   .exhaustive();
    *
    * // Pattern matching com caso padrão
-   * const result = error.match({
-   *   TimeoutError: (e) => handleTimeout(e),
-   *   "*": (e) => handleUnexpectedError(e),
-   * });
+   * const result = TaggedError.match(error)
+   *   .with("TimeoutError", (e) => handleTimeout(e))
+   *   .otherwise((e) => handleUnexpectedError(e));
    * ```
    */
-  public match(cases: Case<Tag, this>) {
-    const tag = this.tag;
-
-    if (typeof cases[tag] === 'function') {
-      return cases[tag](this);
-    }
-
-    if ('*' in cases && typeof cases['*'] === 'function') {
-      return cases['*'](this);
-    }
-
-    throw new Error(`No case found for tag '${tag}'`);
+  public static match<TInput extends TaggedError<any>, TOutput>(error: TInput): Match<TInput, TOutput> {
+    return new Match(error);
   }
 }
 
@@ -223,51 +256,11 @@ export const TaggedError =
  * type MyErrorType = TaggedError<"MyError">;
  *
  * function handleError(error: TaggedError<"TimeoutError" | "NetworkError">) {
- *   // TypeScript sabe que error tem uma das duas tags
+ *   // TypeScript sabe que error tem uma duas tags
  * }
  * ```
  */
 export type TaggedError<Tag extends string> = TaggedErrorConstructor<Tag>;
-
-// ═══════════════════════════════════════════════════════════════════════════╕
-// #region ▼ 🏷️ Helpers
-
-/**
- * Tipo que representa um caso padrão (wildcard) no pattern matching.
- *
- * Usado quando nem todos os casos específicos são cobertos e é necessário
- * um tratamento genérico para casos não previstos.
- */
-type DefaultCase = { '*': (e: TaggedError<string>) => unknown };
-
-/**
- * Tipo que representa cases completos onde todos os casos possíveis são cobertos.
- *
- * Garante que existe uma função de tratamento para cada tag possível.
- */
-type AllCases<Tag extends string, Error extends TaggedError<Tag>> = {
-  [K in Tag]: (e: Error) => unknown;
-};
-
-/**
- * Tipo que representa cases parciais com um caso padrão.
- *
- * Permite cobrir apenas alguns casos específicos e delegar o resto
- * para o caso padrão (wildcard "*").
- */
-type SomeCases<Tag extends string, Error extends TaggedError<Tag>> = Partial<
-  AllCases<Tag, Error>
-> &
-  DefaultCase;
-
-/**
- * Tipo union que representa todas as formas válidas de cases para pattern matching.
- *
- * Aceita tanto cases completos quanto cases parciais com fallback padrão.
- */
-type Case<Tag extends string, Error extends TaggedError<Tag>> =
-  | AllCases<Tag, Error>
-  | SomeCases<Tag, Error>;
 
 /**
  * Corrige o nome de uma função/classe para melhor debugging e inspeção.
@@ -281,7 +274,7 @@ type Case<Tag extends string, Error extends TaggedError<Tag>> =
  */
 /* eslint-disable-next-line @typescript-eslint/no-unsafe-function-type */
 function fixName(target: Function, name: string): void {
-  Object.defineProperty(target, 'name', { configurable: true, value: name });
+  Object.defineProperty(target, "name", { configurable: true, value: name });
 
   if (
     target.prototype &&
@@ -304,9 +297,9 @@ function fixName(target: Function, name: string): void {
  * @param instance - Instância a ter o protótipo corrigido
  * @param prototype - Protótipo que deve ser atribuído à instância
  *
- * @see {@link https://github.com/Microsoft/TypeScript/issues/13965#issuecomment-278570200}
+ * @see {@link https://github.com/Microsoft/TypeScript/issues/13965#comment-278570200}
  */
-// https://github.com/Microsoft/TypeScript/issues/13965#issuecomment-278570200
+// https://github.com/Microsoft/TypeScript/issues/13965#comment-278570200
 function fixPrototype(instance: object, prototype: object) {
   if (Object.setPrototypeOf) {
     Object.setPrototypeOf(instance, prototype);
@@ -314,5 +307,3 @@ function fixPrototype(instance: object, prototype: object) {
     (instance as { __proto__: unknown }).__proto__ = prototype;
   }
 }
-
-// #endregion ═══════════════════════════──────────−−−−− −  ∙   ∙
