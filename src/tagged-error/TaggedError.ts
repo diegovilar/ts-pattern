@@ -1,3 +1,6 @@
+/* oxlint-disable */
+/* eslint-disable */
+
 /**
  * TaggedError - Sistema de erros com tags para pattern matching type-safe
  *
@@ -73,10 +76,11 @@
  * ```
  */
 abstract class TaggedErrorConstructor<Tag extends string> extends Error {
-  #tag: Tag;
+  // @ts-expect-error
+  readonly #tag: Tag;
 
   static {
-    fixName(TaggedErrorConstructor, "TaggedError");
+    fixName(TaggedErrorConstructor, 'TaggedError');
   }
 
   /**
@@ -87,9 +91,14 @@ abstract class TaggedErrorConstructor<Tag extends string> extends Error {
    * @param options - Opções adicionais do Error padrão do JavaScript
    */
   public constructor(tag: Tag, message?: string, options?: ErrorOptions) {
-    super(message, options);
-    this.#tag = tag;
-    fixPrototype(this, new.target.prototype);
+    if (new.target) {
+      super(message, options);
+      this.#tag = tag;
+      fixPrototype(this, new.target.prototype);
+    } else {
+      // @ts-expect-error
+      return new TaggedErrorConstructor(tag, message, options);
+    }
   }
 
   /**
@@ -102,59 +111,6 @@ abstract class TaggedErrorConstructor<Tag extends string> extends Error {
    */
   public get tag() {
     return this.#tag;
-  }
-
-  /**
-   * Executa pattern matching type-safe baseado na tag do erro.
-   *
-   * Permite tratar diferentes tipos de erro de forma declarativa e exhaustiva.
-   * O TypeScript garante que todos os casos sejam cobertos ou que exista um caso padrão.
-   *
-   * @param error - A instância do erro a ser correspondida.
-   * @param cases - Objeto mapeando tags para funções de tratamento.
-   * @returns O resultado da função de tratamento correspondente à tag.
-   *
-   * @throws When no case matches the tag and there is no default case.
-   *
-   * @example
-   * ```typescript
-   * // Pattern matching completo e exaustivo
-   * const result = TaggedError.match(error, {
-   *   TimeoutError: (e) => `Timeout: ${e.timelimit}ms`,
-   *   ValidationError: (e) => `Invalid: ${e.field}`,
-   *   NetworkError: (e) => `Network: ${e.statusCode}`,
-   * });
-   *
-   * // Pattern matching com caso padrão
-   * const result = TaggedError.match(error, {
-   *   TimeoutError: (e) => handleTimeout(e),
-   *   "*": (e) => handleUnexpectedError(e),
-   * });
-   * ```
-   */
-  public static match<TInput extends TaggedError<any>, TCase extends AllCases<TInput["tag"], TInput>>(
-    error: TInput,
-    cases: TCase
-  ): ExtractReturnTypes<TCase>;
-  public static match<TInput extends TaggedError<any>, TCase extends SomeCases<TInput["tag"], TInput>>(
-    error: TInput,
-    cases: TCase
-  ): ExtractReturnTypes<TCase>;
-  public static match<TInput extends TaggedError<any>, TCase extends AllCases<TInput["tag"], TInput> | SomeCases<TInput["tag"], TInput>>(
-    error: TInput,
-    cases: TCase
-  ): ExtractReturnTypes<TCase> {
-    const tag = error.tag;
-
-    if (typeof (cases as any)[tag] === "function") {
-      return (cases as any)[tag](error);
-    }
-
-    if ("*" in cases && typeof (cases as any)["*"] === "function") {
-      return (cases as any)["*"](error);
-    }
-
-    throw new Error(`No case found for tag '${tag}'`);
   }
 }
 
@@ -241,37 +197,8 @@ export const TaggedError =
  */
 export type TaggedError<Tag extends string> = TaggedErrorConstructor<Tag>;
 
-/**
- * Helper type to extract the union of return types from a cases object.
- */
-type ExtractReturnTypes<T> = T extends Record<string, (...args: any[]) => infer R> ? R : never;
-
-/**
- * Tipo que representa um caso padrão (wildcard) no pattern matching.
- *
- * Usado quando nem todos os casos específicos são cobertos e é necessário
- * um tratamento genérico para casos não previstos.
- */
-type DefaultCase = { '*': (e: TaggedError<string>) => any };
-
-/**
- * Tipo que representa cases completos onde todos os casos possíveis são cobertos.
- *
- * Garante que existe uma função de tratamento para cada tag possível.
- */
-type AllCases<Tag extends string, Error extends TaggedError<Tag>> = {
-  [K in Tag]: (e: Extract<Error, { tag: K }>) => any;
-};
-
-/**
- * Tipo que representa cases parciais com um caso padrão.
- *
- * Permite cobrir apenas alguns casos específicos e delegar o resto
- * para o caso padrão (wildcard "*").
- */
-type SomeCases<Tag extends string, Error extends TaggedError<Tag>> = Partial<
-  AllCases<Tag, Error>
-> & DefaultCase;
+// ═══════════════════════════════════════════════════════════════════════════╕
+// #region ▼ 🏷️ Utilities
 
 /**
  * Corrige o nome de uma função/classe para melhor debugging e inspeção.
@@ -283,9 +210,8 @@ type SomeCases<Tag extends string, Error extends TaggedError<Tag>> = Partial<
  * @param target - Função ou classe a ter o nome corrigido
  * @param name - Nome que deve ser atribuído à função/classe
  */
-/* eslint-disable-next-line @typescript-eslint/no-unsafe-function-type */
 function fixName(target: Function, name: string): void {
-  Object.defineProperty(target, "name", { configurable: true, value: name });
+  Object.defineProperty(target, 'name', { configurable: true, value: name });
 
   if (
     target.prototype &&
@@ -318,3 +244,5 @@ function fixPrototype(instance: object, prototype: object) {
     (instance as { __proto__: unknown }).__proto__ = prototype;
   }
 }
+
+// #endregion ═══════════════════════════──────────−−−−− −  ∙   ∙

@@ -1,7 +1,11 @@
+/* oxlint-disable */
+/* eslint-disable */
+
 /**
  * Exemplos exploratorios para ver como o TypeScript lida com TaggedError
  */
 
+import { handle } from './handle.js';
 import { TaggedError } from './TaggedError.js';
 
 class TimeoutError extends TaggedError('TimeoutError') {
@@ -41,16 +45,16 @@ if (opResult instanceof TaggedError) {
   // Aqui, o TypeScript sabe que opResult é uma TaggedError
 
   // All cases required
-  const result = TaggedError.match(opResult, {
+  const result = handle(opResult, {
     TimeoutError: (e) => e.timelimit, // e is infered as TimeoutError
     ExpirationError: (e) => e.timelimit, // e is ExpirationError
     HttpError: (e) => e.text, // e is infered as HttpError
   }); // result: sould be number | string but is unknown
 
   // If default is provided, not all case hanlders are needed (or none at all)
-  const result2 = TaggedError.match(opResult, {
+  const result2 = handle(opResult, {
     TimeoutError: (e) => 1,
-    '*': (e) => 'Unknown error',
+    default: (e) => 'Unknown error',
   }); // result2: sould be number | string, the call does not compile.
 } else {
   // Aqui, o TypeScript sabe que opResult não é uma TaggedError (no caso, é "ok")
