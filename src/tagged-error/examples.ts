@@ -25,7 +25,7 @@ class HttpError extends TaggedError('HttpError') {
   }
 }
 
-function test(value: number) {
+function doSomething(value: number) {
   if (value === 1) {
     return new TimeoutError();
   }
@@ -39,23 +39,71 @@ function test(value: number) {
   return 'ok' as const;
 }
 
-const opResult = test(1); // TimeoutError | ExpirationError | HttpError | "ok"
+const maybeResult = doSomething(1); // TimeoutError | ExpirationError | HttpError | "ok"
 
-if (opResult instanceof TaggedError) {
-  // Aqui, o TypeScript sabe que opResult é uma TaggedError
+// Expectation: number | string | boolean;
+export const exampleResult1 = handle(maybeResult).when({
+  // Matches tagged error TimeoutError
+  TimeoutError: (e /* TimeoutError */) => e.timelimit, // number
 
-  // All cases required
-  const result = handle(opResult, {
-    TimeoutError: (e) => e.timelimit, // e is infered as TimeoutError
-    ExpirationError: (e) => e.timelimit, // e is ExpirationError
-    HttpError: (e) => e.text, // e is infered as HttpError
-  }); // result: sould be number | string but is unknown
+  // Matches tagged error HttpError
+  HttpError: (e /* HttpError */) => e.statusCode, // number
 
-  // If default is provided, not all case hanlders are needed (or none at all)
-  const result2 = handle(opResult, {
-    TimeoutError: (e) => 1,
-    default: (e) => 'Unknown error',
-  }); // result2: sould be number | string, the call does not compile.
-} else {
-  // Aqui, o TypeScript sabe que opResult não é uma TaggedError (no caso, é "ok")
-}
+  // `error` is always optional, matches any error. If provided, the parameter
+  // will ALWAYS be of type `Error`, and any unhandled error types of
+  // maybeResult will be considered handled
+  error: (e /* Error */) => e.message, // string
+
+  // Optional IF all known types of maybeResult were handled (exhaustive), in
+  // which case value is of type `unknown`. Required IF not all known types of
+  // maybeResult were handled (non-exhaustive), in which case value's type is
+  // the union of all known types of maybeResult types excluding the ones
+  // already handled.
+  default: (value /* "ok" */) => false, // boolean
+}); // number | string | boolean
+
+// Expectation: number | "ok";
+export const exampleResult2 = handle(maybeResult).when({
+  TimeoutError: (e /* TimeoutError */) => e.timelimit, // number
+  HttpError: (e /* HttpError */) => e.statusCode, // number
+  ExpirationError: (e /* ExpirationError */) => e.timelimit, // number
+
+  // Se default não fosse fornecido aqui, o TypeScript reclamaria porque há
+  // tipos conhecidos não tratados
+  default: (value /* "ok" */) => value, // "ok"
+});
+
+// Expectation: number | "ok";
+export const exampleResult3 = handle(maybeResult).when({
+  TimeoutError: (e /* TimeoutError */) => e.timelimit, // number
+  HttpError: (e /* HttpError */) => e.statusCode, // number
+
+  // Se default não fosse fornecido aqui, o TypeScript reclamaria porque há
+  // tipos conhecidos não tratados
+  default: (value /* ExpirationError | "ok" */) => {
+    if (typeof value === 'string') {
+      return value;
+    }
+
+    throw new Error('Unexpected error', { cause: value });
+  },
+});
+
+// Este é um exemplo de tratamento parcial com um handler específico para
+// TimeoutError, `error` tratando qualque error e `default` tratando não-erros.
+// Expectation: number | string | boolean
+export const exampleResult4 = handle(maybeResult).when({
+  TimeoutError: (e /* TimeoutError */) => e.timelimit, // number
+  error: (e /* Error */) => e.message, // string
+  default: (value /* "ok" */) => value === 'ok', // boolean
+});
+
+// Este é um exemplo de tratamento parcial com `error` tratando todos os erros e
+// `default` tratando não-erros, basicamente funcionando como try-catch.
+// Expectation: true
+export const exampleResult5 = handle(maybeResult).when({
+  error: (e /* Error */) => {
+    throw new Error('Unexpected error', { cause: e });
+  }, // never
+  default: (value /* "ok" */) => true as const, // true
+});
