@@ -39,10 +39,10 @@ function doSomething(value: number) {
   return 'ok' as const;
 }
 
-const maybeResult = doSomething(1); // TimeoutError | ExpirationError | HttpError | "ok"
+const something = doSomething(1); // TimeoutError | ExpirationError | HttpError | "ok"
 
 // Expectation: number | string | boolean;
-export const exampleResult1 = handle(maybeResult).when({
+export const exampleResult1 = handle(something).when({
   // Matches tagged error TimeoutError
   TimeoutError: (e /* TimeoutError */) => e.timelimit, // number
 
@@ -59,28 +59,28 @@ export const exampleResult1 = handle(maybeResult).when({
   // maybeResult were handled (non-exhaustive), in which case value's type is
   // the union of all known types of maybeResult types excluding the ones
   // already handled.
-  default: (value /* "ok" */) => false, // boolean
+  value: (value /* "ok" */) => false, // boolean
 }); // number | string | boolean
 
 // Expectation: number | "ok";
-export const exampleResult2 = handle(maybeResult).when({
+export const exampleResult2 = handle(something).when({
   TimeoutError: (e /* TimeoutError */) => e.timelimit, // number
   HttpError: (e /* HttpError */) => e.statusCode, // number
   ExpirationError: (e /* ExpirationError */) => e.timelimit, // number
 
-  // Se default não fosse fornecido aqui, o TypeScript reclamaria porque há
+  // Se value não fosse fornecido aqui, o TypeScript reclamaria porque há
   // tipos conhecidos não tratados
-  default: (value /* "ok" */) => value, // "ok"
+  value: (value /* "ok" */) => value, // "ok"
 });
 
 // Expectation: number | "ok";
-export const exampleResult3 = handle(maybeResult).when({
+export const exampleResult3 = handle(something).when({
   TimeoutError: (e /* TimeoutError */) => e.timelimit, // number
   HttpError: (e /* HttpError */) => e.statusCode, // number
 
-  // Se default não fosse fornecido aqui, o TypeScript reclamaria porque há
+  // Se value não fosse fornecido aqui, o TypeScript reclamaria porque há
   // tipos conhecidos não tratados
-  default: (value /* ExpirationError | "ok" */) => {
+  value: (value /* ExpirationError | "ok" */) => {
     if (typeof value === 'string') {
       return value;
     }
@@ -90,20 +90,20 @@ export const exampleResult3 = handle(maybeResult).when({
 });
 
 // Este é um exemplo de tratamento parcial com um handler específico para
-// TimeoutError, `error` tratando qualque error e `default` tratando não-erros.
+// TimeoutError, `error` tratando qualque error e `value` tratando não-erros.
 // Expectation: number | string | boolean
-export const exampleResult4 = handle(maybeResult).when({
+export const exampleResult4 = handle(something).when({
   TimeoutError: (e /* TimeoutError */) => e.timelimit, // number
   error: (e /* Error */) => e.message, // string
-  default: (value /* "ok" */) => value === 'ok', // boolean
+  value: (value /* "ok" */) => value === 'ok', // boolean
 });
 
 // Este é um exemplo de tratamento parcial com `error` tratando todos os erros e
-// `default` tratando não-erros, basicamente funcionando como try-catch.
+// `value` tratando não-erros, basicamente funcionando como try-catch.
 // Expectation: true
-export const exampleResult5 = handle(maybeResult).when({
+export const exampleResult5 = handle(something).when({
   error: (e /* Error */) => {
     throw new Error('Unexpected error', { cause: e });
   }, // never
-  default: (value /* "ok" */) => true as const, // true
+  value: (value /* "ok" */) => true as const, // true
 });

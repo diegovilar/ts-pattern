@@ -3,9 +3,13 @@
 
 import { TaggedError } from './TaggedError';
 
-type ReturnTypes<TCase> = unknown; // Placeholder type, needs to be implemented
+// Placeholder types, just suggestions but may end up being completely changed
+type ReturnTypes<TCase> = unknown;
+type Cases<TInput, THandlers> = object;
+type TagHandler<Tag extends string> = "null" | "throw" | ((e: TaggedError<Tag>) => any)
+type ErrorHandler = "null" | "throw" | ((e: Error) => any)
+type ValueHandler = "null" | "pipe" | ((v) => any)
 
-type Cases<TInput, THandlers> = object; // Placeholder type, needs to be implemented
 
 /**
  * Executa pattern matching type-safe baseado na tag do erro.
@@ -35,30 +39,51 @@ type Cases<TInput, THandlers> = object; // Placeholder type, needs to be impleme
  * });
  * ```
  */
-export function handle<TInput>(value: TInput): Handler<TInput> {
-  return new Handler(value);
+export function handle<TInput>(lazyValue: () => Promise<TInput>): Promise<Handler<Awaited<TInput>>>;
+export function handle<TInput>(lazyValue: () => TInput): Handler<TInput>;
+export function handle<TInput>(value: Promise<TInput>): Promise<Handler<Awaited<TInput>>>;
+export function handle<TInput>(value: TInput): Handler<TInput>;
+export function handle(arg: unknown): Handler<unknown> | Promise<Handler<unknown>> {
+  if (arg instanceof Promise) {
+    return arg.then(
+      // pipe the resolved value
+      resolved => new Handler(resolved),
+      // pipe error or create one if rejected
+      (cause) => new Handler(cause instanceof Error ? cause : new Error("Unhandled promise rejection", {cause}))
+    );
+  }
+
+  if (typeof arg === "function") {
+    let value: unknown;
+    try {
+      value = arg();
+    } catch (cause) {
+      value = cause instanceof Error ? cause : new Error("Unhandled lazy value", {cause});
+    }    
+    return (value instanceof Promise) ? handle(value) : new Handler(value);
+  }
+  
+  return new Handler(arg);
 }
 
 export class Handler<TInput> {
   constructor(private readonly input: TInput) {}
 
-  when<THandlers extends object>(
-    cases: Cases<TInput, THandlers>
-  ): ReturnTypes<THandlers>;
+  when<THandlers extends object>(cases: Cases<TInput, THandlers>): ReturnTypes<THandlers>;
 
   when(cases: Record<string, unknown>) {
     const input = this.input;
 
     if (input instanceof Error) {
-      const handlers: Array<{ tag: string; handler: unknown }> = [
-        { tag: 'Error', handler: cases['error'] },
+      const handlers: Array<{ name: string; handler: unknown }> = [
+        { name: 'Error', handler: cases['error'] },
       ];
 
       if (input instanceof TaggedError) {
-        handlers.unshift({ tag: input.tag, handler: cases[input.tag] });
+        handlers.unshift({ name: input.tag, handler: cases[input.tag] });
       }
 
-      for (const { tag, handler } of handlers) {
+      for (const { name, handler } of handlers) {
         if (typeof handler === 'undefined') {
           continue;
         }
@@ -71,7 +96,7 @@ export class Handler<TInput> {
           return handler(input);
         }
 
-        throw new TypeError(`Invalid handler provided for ${tag}`);
+        throw new TypeError(`Invalid handler provided for ${name}`);
       }
 
       throw new TypeError(
@@ -80,14 +105,16 @@ export class Handler<TInput> {
       );
     }
 
-    const defaultHandler = cases['default'];
+    const valueHandler = cases['value'] ?? "pipe";
 
-    if (typeof defaultHandler === 'undefined') {
-      throw new TypeError(`No default handler provided for value`);
-    } else if (typeof defaultHandler !== 'function') {
-      throw new TypeError(`Invalid default handler provided`);
+    if (valueHandler === 'pipe') {
+      return input
+    } else if (valueHandler === 'null') {
+      return null
+    } else if (typeof valueHandler === 'function') {
+      return valueHandler(input);
     }
-
-    return defaultHandler(input);
+    
+    throw new TypeError(`Invalid value handler provided`);
   }
 }
